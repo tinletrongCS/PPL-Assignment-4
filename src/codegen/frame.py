@@ -1,5 +1,25 @@
 from typing import List, Optional
 from .error import IllegalRuntimeException
+# Công cụ dùng để theo dõi trạng thái của khung ngăn xếp khi tạo mã máy cho một phương thức cụ thể.
+# Quản lý thông tin của label, stack và biến cục bộ trong quá trình tạo mã máy.
+# Vị trí bắt đầu, kết thúc của phạm vi, vòng lặp và chỉ mục biến cục bộ được theo dõi để đảm bảo mã máy chính xác.
+
+# 2 điều quan trọng nhất:
+# Muốn sinh mã thì phải đi tìm emitter
+# Muốn đụng tới label, local variable array, operation stack -> o.frame
+# Khi visit expr thì phải trả về code với type
+
+
+# -----------------------------
+# cách sinh mã cho statement
+# bước 1: vẽ flowchart của stmt đó sao cho tất cả các khối nằm trên 1 phương thẳng đúng từ trên xuống
+# bước 2: xác định xem trên flowchart có bao nhiêu rẽ nhánh hay điểm nhảy thì sinh bấy nhiêu label
+# sinh label bằng cách gọi hàm o.frame.getNewLabel()
+#
+#
+# bước 3: viết mã giả cho từng khối theo phương thẳng đúng từ trên xuống dưới khi gặp rẽ nhánh
+# thì xử lý rẽ nhánh trước rồi ngay lặp tức quay lại với trục chính
+# bước 4: từ mã giả ở bước 3 viết mã thật
 
 
 class Frame:

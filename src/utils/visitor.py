@@ -331,17 +331,17 @@ class BaseVisitor(ASTVisitor):
         for arg in node.args:
             self.visit(arg, o)
 
-    def visit_static_method_invocation(
-        self, node: "StaticMethodInvocation", o: Any = None
-    ):
-        for arg in node.args:
-            self.visit(arg, o)
-
-    def visit_static_member_access(self, node: "StaticMemberAccess", o: Any = None):
-        pass
-
-    def visit_method_invocation(self, node: "MethodInvocation", o: Any = None):
-        self.visit(node.postfix_expr, o)
+    # def visit_static_method_invocation(
+    #     self, node: "StaticMethodInvocation", o: Any = None
+    # ):
+    #     for arg in node.args:
+    #         self.visit(arg, o)
+    #
+    # def visit_static_member_access(self, node: "StaticMemberAccess", o: Any = None):
+    #     pass
+    #
+    # def visit_method_invocation(self, node: "MethodInvocation", o: Any = None):
+    #     self.visit(node.postfix_expr, o)
 
     def visit_identifier(self, node: "Identifier", o: Any = None):
         pass

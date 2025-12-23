@@ -133,37 +133,46 @@ class CodeGenerator(ASTVisitor):
     def generate_method(self, node: "MethodDecl", frame: Frame, is_static: bool):
         """
         Generate code for a method.
-        
-        Args:
-            node: Method declaration node
-            frame: Frame for this method
-            is_static: Whether method is static
         """
         class_name = self.current_class
         method_name = node.name
-        
-        # Build method signature
-        param_types = [p.param_type for p in node.params]
         return_type = node.return_type
-        
-        # Create function type for method signature
-        func_type = FunctionType(param_types, return_type)
-        
-        # Emit method directive
+
+        # 1. Xử lý signature đặc biệt cho hàm main
+        if method_name == "main" and is_static:
+            # Ép descriptor thành ([Ljava/lang/String;)V bằng cách tạo FunctionType giả lập
+            # OPLang ArrayType cần element_type và size
+            mtype = FunctionType([ArrayType(PrimitiveType("string"), 0)], PrimitiveType("void"))
+        else:
+            param_types = [p.param_type for p in node.params]
+            mtype = FunctionType(param_types, return_type)
+
+        # Emit method directive (.method public static main([Ljava/lang/String;)V)
         self.emit.print_out(
             self.emit.emit_method(
                 method_name,
-                func_type,
+                mtype,
                 is_static
             )
         )
-        
+
         frame.enter_scope(True)
         from_label = frame.get_start_label()
         to_label = frame.get_end_label()
-        
-        # Handle 'this' parameter for instance methods
-        if not is_static:
+
+        # 2. Quản lý Index: Giữ chỗ cho tham số trong bảng biến cục bộ
+        sym_list = []
+
+        extra_io = [
+            Symbol("print", FunctionType([PrimitiveType("string")], PrimitiveType("void")), CName("io")),
+            Symbol("int2str", FunctionType([PrimitiveType("int")], PrimitiveType("string")), CName("io"))
+        ]
+
+        if method_name == "main" and is_static:
+            # Index 0 dành cho tham số String[] args mà JVM truyền vào
+            frame.get_new_index()
+        elif not is_static:
+            # Index 0 dành cho 'this' đối với instance method
             this_idx = frame.get_new_index()
             self.emit.print_out(
                 self.emit.emit_var(
@@ -174,13 +183,10 @@ class CodeGenerator(ASTVisitor):
                     to_label
                 )
             )
-            # Add 'this' to symbol list
             sym_list.append(Symbol("this", ClassType(class_name), Index(this_idx)))
-        
-        # Generate code for parameters
-        sym_list = []
-        param_start_idx = 0 if is_static else 1  # Skip 'this' for instance methods
-        for i, param in enumerate(node.params):
+
+        # Khai báo các tham số thực tế từ AST (nếu có)
+        for param in node.params:
             idx = frame.get_new_index()
             self.emit.print_out(
                 self.emit.emit_var(
@@ -192,23 +198,23 @@ class CodeGenerator(ASTVisitor):
                 )
             )
             sym_list.append(Symbol(param.name, param.param_type, Index(idx)))
-        
-        # Add IO symbols
-        sym_list = IO_SYMBOL_LIST + sym_list
-        
+
+        # Thêm các ký hiệu IO để có thể gọi hàm print, int2str...
+        sym_list = extra_io + IO_SYMBOL_LIST + sym_list
+
         self.emit.print_out(self.emit.emit_label(from_label, frame))
-        
-        # Generate code for method body
+
+        # 3. Generate code cho thân hàm (Body)
         o = SubBody(frame, sym_list)
         self.visit(node.body, o)
-        
-        # Emit return if void
+
+        # Tự động thêm lệnh return nếu là hàm void
         if is_void_type(return_type):
             self.emit.print_out(self.emit.emit_return(return_type, frame))
-        
+
         self.emit.print_out(self.emit.emit_label(to_label, frame))
         self.emit.print_out(self.emit.emit_end_method(frame))
-        
+
         frame.exit_scope()
 
     # ============================================================================
@@ -351,8 +357,12 @@ class CodeGenerator(ASTVisitor):
         Visit method invocation statement.
         """
         # TODO: Implement method invocation statement
-        pass
 
+        code, typ = self.visit(node.method_call, Access(o.frame, o.sym, False))
+        self.emit.print_out(code)
+
+        if not is_void_type(typ):
+            self.emit.print_out(self.emit.emit_pop(o.frame))
     # ============================================================================
     # Left-hand Side (LHS)
     # ============================================================================
@@ -405,16 +415,52 @@ class CodeGenerator(ASTVisitor):
     def visit_postfix_expression(self, node: "PostfixExpression", o: Access = None):
         """
         Visit postfix expression (method calls, member access, array access).
-        TODO: Implement postfix expression code generation
+        TODO: Implement postfix expression code generation *
         """
-        pass
+        code, typ = self.visit(node.primary, o)
+
+        for op in node.postfix_ops:
+            code_op, typ = self.visit(op, Access(o.frame, o.sym, o.is_left, typ))
+            code += code_op
+
+        return code, typ
 
     def visit_method_call(self, node: "MethodCall", o: Access = None):
         """
         Visit method call.
-        TODO: Implement method call code generation
+        TODO: Implement method call code generation *
         """
-        pass
+        sym = next(filter(lambda x: x.name == node.method_name, o.sym), None)
+        if sym is None:
+            raise IllegalOperandException(f"Undeclared variable: {node.method_name}")
+
+        # Sinh mã để đẩy các đối số (arguments) lên stack
+        arg_code = ""
+        for arg in node.args:
+            c, t = self.visit(arg, Access(o.frame, o.sym, False))
+            arg_code += c
+
+        # Gọi hàm tĩnh từ class 'io'
+        if isinstance(sym.value, CName):
+            cname = sym.value.value
+            mname = node.method_name
+
+            # Ánh xạ print sang writeStr của thư viện io
+            if cname == "io" and mname == "print":
+                mname = "writeStr"
+
+            # Ánh xạ int2str sang String.valueOf của Java để lấy kết quả "42"
+            if mname == "int2str":
+                return arg_code + self.emit.emit_invoke_static(
+                    "java/lang/String/valueOf",
+                    FunctionType([PrimitiveType("int")], PrimitiveType("string")),
+                    o.frame
+                ), PrimitiveType("string")
+
+            invoke_code = self.emit.emit_invoke_static(f"{cname}/{mname}", sym.type, o.frame)
+            return arg_code + invoke_code, sym.type.return_type
+
+        return arg_code, sym.type.return_type
 
     def visit_member_access(self, node: "MemberAccess", o: Access = None):
         """
@@ -433,7 +479,7 @@ class CodeGenerator(ASTVisitor):
     def visit_object_creation(self, node: "ObjectCreation", o: Access = None):
         """
         Visit object creation.
-        TODO: Implement object creation code generation
+        TODO: Implement object creation code generation *
         """
         pass
 
@@ -443,19 +489,18 @@ class CodeGenerator(ASTVisitor):
         """
         if o is None:
             return "", None
-        
+
         # Find symbol
         sym = next(filter(lambda x: x.name == node.name, o.sym), None)
         if sym is None:
             raise IllegalOperandException(f"Undeclared identifier: {node.name}")
-        
+
         if type(sym.value) is Index:
             code = self.emit.emit_read_var(
                 sym.name, sym.type, sym.value.value, o.frame
             )
             return code, sym.type
-        else:
-            raise IllegalOperandException(f"Cannot read: {node.name}")
+        return "", sym.type
 
     def visit_this_expression(self, node: "ThisExpression", o: Access = None):
         """
@@ -542,4 +587,13 @@ class CodeGenerator(ASTVisitor):
         o.frame.push()
         code = self.emit.jvm.emitPUSHNULL()
         return code, None  # Type will be determined by context
+
+    def visit_method_invocation(self, node: "MethodInvocation", o: Any = None):
+        pass
+
+    def visit_static_method_invocation(self, node: "StaticMethodInvocation", o: Any = None):
+        pass
+
+    def visit_static_member_access(self, node: "StaticMemberAccess", o: Any = None):
+        pass
 

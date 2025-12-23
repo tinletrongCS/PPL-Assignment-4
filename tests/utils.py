@@ -132,6 +132,18 @@ class CodeGenerator:
     def generate_and_run(self, ast):
         """Generate code from AST and run it, return output"""
         try:
+            # --- THÊM ĐOẠN NÀY ĐỂ DỌN DẸP ---
+            # Xóa sạch các file .j và .class cũ trước khi chạy test mới
+            for filename in os.listdir(self.runtime_dir):
+                file_path = os.path.join(self.runtime_dir, filename)
+                # Chỉ xóa file .j và .class, TRỪ io.class (thư viện)
+                if filename.endswith(".j") or (filename.endswith(".class") and filename != "io.class"):
+                    try:
+                        os.remove(file_path)
+                    except OSError:
+                        pass
+            # -------------------------------
+
             # Change to runtime directory and generate code from AST
             original_dir = os.getcwd()
             os.chdir(self.runtime_dir)
@@ -139,13 +151,13 @@ class CodeGenerator:
                 self.codegen.visit(ast)
             finally:
                 os.chdir(original_dir)
-            
+
             # Find all generated .j files
             j_files = glob.glob(os.path.join(self.runtime_dir, "*.j"))
-            
+
             if not j_files:
                 return "Error: No .j files generated"
-            
+
             # Assemble all .j files to .class
             try:
                 for j_file in j_files:
@@ -156,15 +168,15 @@ class CodeGenerator:
                         text=True,
                         timeout=10
                     )
-                    
+
                     if result.returncode != 0:
                         return f"Assembly error for {os.path.basename(j_file)}: {result.stderr}"
-                
+
                 # Find the class with main method
                 # In OPLang, any class can have a static main() method
                 class_files = glob.glob(os.path.join(self.runtime_dir, "*.class"))
                 main_class = None
-                
+
                 # Try to find a class with main method
                 # For now, try running the first class found, or look for a specific pattern
                 # This is a simplified approach - in practice, you might need to check which class has main
@@ -173,7 +185,7 @@ class CodeGenerator:
                     # For simplicity, we'll try the first class file
                     # In a real implementation, you might need to inspect the class files
                     # or maintain a list of classes with main methods
-                    
+
                     # Get class name from .class file (remove .class extension)
                     for class_file in class_files:
                         class_name = os.path.basename(class_file).replace(".class", "")
@@ -182,10 +194,10 @@ class CodeGenerator:
                             continue
                         main_class = class_name
                         break
-                
+
                 if not main_class:
                     return "Error: No main class found"
-                
+
                 # Run program
                 result = subprocess.run(
                     ["java", main_class],
@@ -194,16 +206,16 @@ class CodeGenerator:
                     text=True,
                     timeout=10
                 )
-                
+
                 if result.returncode != 0:
                     return f"Runtime error: {result.stderr}"
-                
+
                 return result.stdout.strip()
-                
+
             except subprocess.TimeoutExpired:
                 return "Timeout"
             except FileNotFoundError:
                 return "Java not found"
-                
+
         except Exception as e:
             return f"Code generation error: {str(e)}"
